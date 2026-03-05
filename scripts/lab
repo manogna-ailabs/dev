@@ -1,0 +1,130 @@
+#!/usr/bin/env zsh
+# lab — personal dev workspace CLI
+# Usage: lab <command> [project]
+
+DEV="${HOME}/dev"
+APPS="${DEV}/apps"
+SCRIPTS="${DEV}/scripts"
+WORKSPACES="${DEV}/workspaces"
+
+# ── Help ─────────────────────────────────────────────────────────────────────
+_lab_usage() {
+  echo "Usage: lab <command> [project]"
+  echo ""
+  echo "Commands:"
+  echo "  new <project>     Create a new project from the webapp-template"
+  echo "  start <project>   Open a tmux session with dev server + shell"
+  echo "  dev <project>     Run pnpm dev in the terminal (no tmux)"
+  echo "  open <project>    Open the project VS Code workspace"
+  echo "  list              List all projects in apps/"
+  echo "  remove <project>  Delete a project and its workspace file"
+}
+
+# ── Subcommands ───────────────────────────────────────────────────────────────
+
+_lab_new() {
+  [[ -z "$1" ]] && { echo "Usage: lab new <project>"; exit 1 }
+  "${SCRIPTS}/new-project.sh" "$1"
+}
+
+_lab_start() {
+  [[ -z "$1" ]] && { echo "Usage: lab start <project>"; exit 1 }
+  local project="$1"
+  local project_dir="${APPS}/${project}"
+
+  if [[ ! -d "$project_dir" ]]; then
+    echo "Error: project '${project}' not found in apps/"
+    exit 1
+  fi
+
+  # If session already exists, just attach
+  if tmux has-session -t "$project" 2>/dev/null; then
+    echo "Attaching to existing session '${project}'..."
+    tmux attach-session -t "$project"
+    return
+  fi
+
+  # Create session with window 1: dev server
+  tmux new-session -d -s "$project" -n "dev" -c "$project_dir"
+  tmux send-keys -t "${project}:dev" "pnpm dev" Enter
+
+  # Window 2: shell
+  tmux new-window -t "$project" -n "shell" -c "$project_dir"
+
+  # Attach
+  tmux attach-session -t "$project"
+}
+
+_lab_dev() {
+  [[ -z "$1" ]] && { echo "Usage: lab dev <project>"; exit 1 }
+  local project_dir="${APPS}/$1"
+  if [[ ! -d "$project_dir" ]]; then
+    echo "Error: project '$1' not found in apps/"
+    exit 1
+  fi
+  cd "$project_dir" && pnpm dev
+}
+
+_lab_open() {
+  [[ -z "$1" ]] && { echo "Usage: lab open <project>"; exit 1 }
+  local workspace="${WORKSPACES}/$1.code-workspace"
+  if [[ ! -f "$workspace" ]]; then
+    echo "Error: workspace file not found at workspaces/$1.code-workspace"
+    exit 1
+  fi
+  code "$workspace"
+}
+
+_lab_list() {
+  echo "Projects in apps/:"
+  for dir in "${APPS}"/*/; do
+    echo "  ${dir:t}"
+  done
+}
+
+_lab_remove() {
+  [[ -z "$1" ]] && { echo "Usage: lab remove <project>"; exit 1 }
+  local project="$1"
+  local project_dir="${APPS}/${project}"
+  local workspace="${WORKSPACES}/${project}.code-workspace"
+
+  if [[ ! -d "$project_dir" ]]; then
+    echo "Error: project '${project}' not found in apps/"
+    exit 1
+  fi
+
+  echo "This will permanently delete:"
+  [[ -d "$project_dir" ]] && echo "  ${project_dir}"
+  [[ -f "$workspace" ]]   && echo "  ${workspace}"
+  echo -n "Are you sure? [y/N] "
+  read -r confirm
+  if [[ "$confirm" != "y" && "$confirm" != "Y" ]]; then
+    echo "Aborted."
+    exit 0
+  fi
+
+  if [[ -d "$project_dir" ]]; then
+    rm -rf -- "$project_dir"
+    if [[ -d "$project_dir" ]]; then
+      echo "Warning: could not fully remove ${project_dir} — try: sudo rm -rf '${project_dir}'"
+    else
+      echo "Removed ${project_dir}"
+    fi
+  fi
+
+  if [[ -f "$workspace" ]]; then
+    rm -f -- "$workspace"
+    echo "Removed ${workspace}"
+  fi
+}
+
+# ── Dispatch ──────────────────────────────────────────────────────────────────
+case "$1" in
+  new)     _lab_new    "$2" ;;
+  start)   _lab_start  "$2" ;;
+  dev)     _lab_dev    "$2" ;;
+  open)    _lab_open   "$2" ;;
+  list)    _lab_list        ;;
+  remove)  _lab_remove "$2" ;;
+  *)       _lab_usage       ;;
+esac
